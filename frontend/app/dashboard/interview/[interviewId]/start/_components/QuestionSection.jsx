@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "../../../../../../components/ui/button";
 import { Lightbulb } from "lucide-react";
 import { TbVolume } from "react-icons/tb";
 import React from "react";
