@@ -12,6 +12,7 @@ import { Mic, StopCircle } from "lucide-react";
 import { toast } from "sonner";
 import { chatSession } from "../../../../../../utils/GeminiAIModal";
 import moment from "moment";
+import { eq, and } from "drizzle-orm";
 
 function RecordQuestionSection({
   mockInterviewQuestion = [],
@@ -189,17 +190,33 @@ function RecordQuestionSection({
         .replace("```", "");
       const JsonFeedbackResp = JSON.parse(mockJsonResp);
 
-      await db.insert(UserAnswer).values({
-        mockIdRef: interviewData?.mockId,
-        question: mockInterviewQuestion[activeQuestionIndex]?.question,
-        correctAns: mockInterviewQuestion[activeQuestionIndex]?.answer,
-        userAns: capturedAnswer,
-        feedback: JsonFeedbackResp?.feedback,
-        rating: JsonFeedbackResp?.rating,
-        userEmail: user?.primaryEmailAddress.emailAddress,
-        createdAt: moment().format("DD-MM-yyyy"),
-        voiceMetrics: voiceMetrics || null,
-      });
+      // await db.insert(UserAnswer).values({
+      //   mockIdRef: interviewData?.mockId,
+      //   question: mockInterviewQuestion[activeQuestionIndex]?.question,
+      //   correctAns: mockInterviewQuestion[activeQuestionIndex]?.answer,
+      //   userAns: capturedAnswer,
+      //   feedback: JsonFeedbackResp?.feedback,
+      //   rating: JsonFeedbackResp?.rating,
+      //   userEmail: user?.primaryEmailAddress.emailAddress,
+      //   createdAt: moment().format("DD-MM-yyyy"),
+      //   voiceMetrics: voiceMetrics || null,
+      // });
+      await db
+        .update(UserAnswer)
+        .set({
+          question: mockInterviewQuestion[activeQuestionIndex]?.question,
+          userAns: capturedAnswer,
+          feedback: JsonFeedbackResp?.feedback,
+          rating: JsonFeedbackResp?.rating,
+          createdAt: moment().format("DD-MM-yyyy"),
+          userEmail: user?.primaryEmailAddress.emailAddress,
+          voiceMetrics: voiceMetrics || null,
+        })
+        .where(
+          and(
+            eq(UserAnswer.mockIdRef, interviewData?.mockId)
+          )
+        );
 
       toast("User Answer Recorded successfully.");
 

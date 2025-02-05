@@ -5,6 +5,7 @@ import { Input } from "../../../components/ui/input";
 import { Textarea } from "../../../components/ui/textarea";
 import { IoMail } from "react-icons/io5";
 import { FaUser } from "react-icons/fa";
+import { UserAnswer } from "../../../utils/schema";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +21,7 @@ import { v4 as uuidv4 } from "uuid";
 import { useUser } from "@clerk/nextjs";
 import moment from "moment/moment";
 import { useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 
 function AddNewInterview() {
   const [openDialog, setOpenDialog] = useState(false);
@@ -30,6 +32,8 @@ function AddNewInterview() {
   const [JsonResponse, setJsonResponse] = useState([]);
   const router = useRouter();
   const { isSignedIn, user } = useUser();
+  const param=useParams();
+  const mockId=param.interviewId
 
   const onSubmit = async (e) => {
   e.preventDefault();
@@ -73,6 +77,14 @@ function AddNewInterview() {
             createdAt: moment().format("DD-MM-yyyy"),
           })
           .returning({ mockId: MockInterview.mockId });
+          // console.log(mockId);
+          // console.log(rawResponse.interviewQuestions[0].answerExample);
+
+           await db.insert(UserAnswer).values({
+                  mockIdRef: resp[0]?.mockId,
+                  question: MockJsonResp[0]?.question,
+                  correctAns: JSON.stringify(MockJsonResp[0]?.answerExample)
+                });
 
         console.log("Inserted ID: ", resp);
 
