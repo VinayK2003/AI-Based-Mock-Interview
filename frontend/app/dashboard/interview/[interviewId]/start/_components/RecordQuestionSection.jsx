@@ -212,7 +212,10 @@ function RecordQuestionSection({
         .replace("```", "");
       const JsonFeedbackResp = JSON.parse(mockJsonResp);
       console.log("answer hai ",mockInterviewQuestion);
-      console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answerExample);
+      // console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answerExample);
+      const correctAnswer =
+        mockInterviewQuestion[activeQuestionIndex].answerExample ||
+        mockInterviewQuestion[activeQuestionIndex].answer;
       // if (!answerExample|| !capturedAnswer) {
       //   throw new Error("Both reference and candidate texts are required !!");
       // }
@@ -224,7 +227,7 @@ function RecordQuestionSection({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          reference: mockInterviewQuestion[activeQuestionIndex].answerExample,
+          reference: correctAnswer,
           candidate: capturedAnswer
         }),
       });
@@ -252,7 +255,7 @@ function RecordQuestionSection({
         .set({
           question: mockInterviewQuestion[activeQuestionIndex]?.question,
           userAns: capturedAnswer,
-          correctAns: mockInterviewQuestion[activeQuestionIndex]?.answer,
+          correctAns: correctAnswer,
           feedback: JsonFeedbackResp?.feedback,
           rating: JsonFeedbackResp?.rating,
           createdAt: moment().format("DD-MM-yyyy"),
