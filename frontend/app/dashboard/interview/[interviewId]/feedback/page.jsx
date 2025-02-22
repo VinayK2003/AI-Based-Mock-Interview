@@ -14,7 +14,6 @@ import { useRouter } from "next/navigation";
 import { MdOutlineDashboardCustomize } from "react-icons/md";
 import { useParams } from "next/navigation";
 
-
 function Feedback() {
   const [feedbackList, setFeedbackList] = useState([]);
   const router = useRouter();
@@ -50,13 +49,25 @@ function Feedback() {
             <p className="text-blue-800">
               <strong>Volume Score:</strong> {metrics.volume_score}
             </p>
-          </div>
-          <div className="space-y-2">
             <p className="text-blue-800">
               <strong>Clarity Score:</strong> {metrics.clarity_score}
             </p>
             <p className="text-blue-800">
               <strong>Rhythm Score:</strong> {metrics.rhythm_score}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-blue-800">
+              <strong>Pitch Score:</strong> {metrics.pitch_score}
+            </p>
+            <p className="text-blue-800">
+              <strong>Tone Score:</strong> {metrics.tone_score}
+            </p>
+            <p className="text-blue-800">
+              <strong>Pause Score:</strong> {metrics.pause_score}
+            </p>
+            <p className="text-blue-800">
+              <strong>Frequency Variation:</strong> {metrics.frequency_variation}
             </p>
           </div>
         </div>

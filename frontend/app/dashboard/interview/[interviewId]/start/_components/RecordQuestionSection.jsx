@@ -212,10 +212,10 @@ function RecordQuestionSection({
         .replace("```", "");
       const JsonFeedbackResp = JSON.parse(mockJsonResp);
       console.log("answer hai ",mockInterviewQuestion);
-      console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answer);
-      if (!answer|| !capturedAnswer) {
-        throw new Error("Both reference and candidate texts are required !!");
-      }
+      console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answerExample);
+      // if (!answerExample|| !capturedAnswer) {
+      //   throw new Error("Both reference and candidate texts are required !!");
+      // }
       
 
       const nlpResponse = await fetch('/api/process-text', {
@@ -224,7 +224,7 @@ function RecordQuestionSection({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          reference: mockInterviewQuestion[activeQuestionIndex].answer,
+          reference: mockInterviewQuestion[activeQuestionIndex].answerExample,
           candidate: capturedAnswer
         }),
       });
