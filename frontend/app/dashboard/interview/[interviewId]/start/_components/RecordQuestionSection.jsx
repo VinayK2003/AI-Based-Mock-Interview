@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { chatSession } from "../../../../../../utils/GeminiAIModal";
 import moment from "moment";
 import { eq, and } from "drizzle-orm";
+// const natural = require('natural');
 
 function RecordQuestionSection({
   mockInterviewQuestion = [],
@@ -165,6 +166,26 @@ function RecordQuestionSection({
       setLoading(false);
     }
   };
+  // const processText = async (text) => {
+  //   try {
+  //     const response = await fetch('/api/process-text', {
+  //       method: 'POST',
+  //       headers: {
+  //         'Content-Type': 'application/json',
+  //       },
+  //       body: JSON.stringify({ reference ,candidate }),
+  //     });
+      
+  //     const data = await response.json();
+  //     if (!data.success) {
+  //       throw new Error(data.error);
+  //     }
+      
+  //     setProcessedText(data);
+  //   } catch (error) {
+  //     console.error('Error processing text:', error);
+  //   }
+  // };
 
   const updateUserAnswer = async (voiceMetrics = null, capturedAnswer) => {
     if (!capturedAnswer) {
@@ -184,12 +205,34 @@ function RecordQuestionSection({
         User Answer: ${capturedAnswer}. Please provide a rating and feedback in JSON format with fields: "rating" and "feedback".`;
 
       const result = await chatSession.sendMessage(feedbackPrompt);
+      const answer="hello hello"
       const mockJsonResp = result.response
         .text()
         .replace("```json", "")
         .replace("```", "");
       const JsonFeedbackResp = JSON.parse(mockJsonResp);
+      console.log("answer hai ",mockInterviewQuestion);
+      console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answer);
+      if (!answer|| !capturedAnswer) {
+        throw new Error("Both reference and candidate texts are required !!");
+      }
+      
 
+      const nlpResponse = await fetch('/api/process-text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reference: mockInterviewQuestion[activeQuestionIndex].answer,
+          candidate: capturedAnswer
+        }),
+      });
+  
+      const nlpData = await nlpResponse.json();
+      if (!nlpData.success) {
+        throw new Error(nlpData.error);
+      }
       // await db.insert(UserAnswer).values({
       //   mockIdRef: interviewData?.mockId,
       //   question: mockInterviewQuestion[activeQuestionIndex]?.question,
@@ -201,11 +244,15 @@ function RecordQuestionSection({
       //   createdAt: moment().format("DD-MM-yyyy"),
       //   voiceMetrics: voiceMetrics || null,
       // });
+      // const bleuScore = natural.BLEUScore(mockInterviewQuestion[activeQuestionIndex]?.answer, capturedAnswer);
+      // console.log("BLEU Score:", bleuScore);
+
       await db
         .update(UserAnswer)
         .set({
           question: mockInterviewQuestion[activeQuestionIndex]?.question,
           userAns: capturedAnswer,
+          correctAns: mockInterviewQuestion[activeQuestionIndex]?.answer,
           feedback: JsonFeedbackResp?.feedback,
           rating: JsonFeedbackResp?.rating,
           createdAt: moment().format("DD-MM-yyyy"),
