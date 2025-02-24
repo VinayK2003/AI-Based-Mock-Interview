@@ -1,5 +1,3 @@
-"use client";
-import Image from "next/image";
 import React, { useState, useRef, useEffect } from "react";
 import Webcam from "react-webcam";
 import { Button } from "../../../../../../components/ui/button";
@@ -13,7 +11,6 @@ import { toast } from "sonner";
 import { chatSession } from "../../../../../../utils/GeminiAIModal";
 import moment from "moment";
 import { eq, and } from "drizzle-orm";
-// const natural = require('natural');
 
 function RecordQuestionSection({
   mockInterviewQuestion = [],
@@ -43,7 +40,28 @@ function RecordQuestionSection({
   } = useSpeechToText({
     continuous: true,
     useLegacyResults: false,
+    speechRecognitionProperties: {
+      lang: "en-IN",
+    },
   });
+
+  // Listen for tab changes using the Page Visibility API.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        toast("Tab change detected. Please remain on this page during the interview.");
+        // Optionally, you can automatically stop recording if desired.
+        if (recording) {
+          stopRecording();
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [recording]);
 
   useEffect(() => {
     if (!isSubmitted) {
@@ -166,26 +184,6 @@ function RecordQuestionSection({
       setLoading(false);
     }
   };
-  // const processText = async (text) => {
-  //   try {
-  //     const response = await fetch('/api/process-text', {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json',
-  //       },
-  //       body: JSON.stringify({ reference ,candidate }),
-  //     });
-      
-  //     const data = await response.json();
-  //     if (!data.success) {
-  //       throw new Error(data.error);
-  //     }
-      
-  //     setProcessedText(data);
-  //   } catch (error) {
-  //     console.error('Error processing text:', error);
-  //   }
-  // };
 
   const updateUserAnswer = async (voiceMetrics = null, capturedAnswer) => {
     if (!capturedAnswer) {
@@ -205,21 +203,15 @@ function RecordQuestionSection({
         User Answer: ${capturedAnswer}. Please provide a rating and feedback in JSON format with fields: "rating" and "feedback".`;
 
       const result = await chatSession.sendMessage(feedbackPrompt);
-      const answer="hello hello"
       const mockJsonResp = result.response
         .text()
         .replace("```json", "")
         .replace("```", "");
       const JsonFeedbackResp = JSON.parse(mockJsonResp);
-      console.log("answer hai ",mockInterviewQuestion);
-      // console.log("answer is ",mockInterviewQuestion[activeQuestionIndex].answerExample);
+      console.log("answer hai ", mockInterviewQuestion);
       const correctAnswer =
         mockInterviewQuestion[activeQuestionIndex].answerExample ||
         mockInterviewQuestion[activeQuestionIndex].answer;
-      // if (!answerExample|| !capturedAnswer) {
-      //   throw new Error("Both reference and candidate texts are required !!");
-      // }
-      
 
       const nlpResponse = await fetch('/api/process-text', {
         method: 'POST',
@@ -236,19 +228,6 @@ function RecordQuestionSection({
       if (!nlpData.success) {
         throw new Error(nlpData.error);
       }
-      // await db.insert(UserAnswer).values({
-      //   mockIdRef: interviewData?.mockId,
-      //   question: mockInterviewQuestion[activeQuestionIndex]?.question,
-      //   correctAns: mockInterviewQuestion[activeQuestionIndex]?.answer,
-      //   userAns: capturedAnswer,
-      //   feedback: JsonFeedbackResp?.feedback,
-      //   rating: JsonFeedbackResp?.rating,
-      //   userEmail: user?.primaryEmailAddress.emailAddress,
-      //   createdAt: moment().format("DD-MM-yyyy"),
-      //   voiceMetrics: voiceMetrics || null,
-      // });
-      // const bleuScore = natural.BLEUScore(mockInterviewQuestion[activeQuestionIndex]?.answer, capturedAnswer);
-      // console.log("BLEU Score:", bleuScore);
 
       await db
         .update(UserAnswer)
@@ -270,7 +249,6 @@ function RecordQuestionSection({
 
       toast("User Answer Recorded successfully.");
 
-      // Only clear after successful save
       setTimeout(() => {
         setResults([]);
         setUserAnswer("");
@@ -289,7 +267,7 @@ function RecordQuestionSection({
   return (
     <div className="flex items-center justify-center flex-col">
       <div className="flex flex-col justify-center items-center rounded-lg p-5">
-        <Image src="/webcam3.png" alt="WebCAM" width={140} height={140} />
+        <img src="/webcam3.png" alt="WebCAM" width={140} height={140} />
       </div>
       <div className="flex flex-col justify-center items-center rounded-lg p-5 mt-5 bg-black">
         <Webcam mirrored={true} style={{ height: 300, width: "100%", zIndex: 100 }} />
