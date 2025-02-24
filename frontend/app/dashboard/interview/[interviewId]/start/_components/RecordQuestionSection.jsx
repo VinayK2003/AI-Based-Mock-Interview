@@ -200,7 +200,7 @@ function RecordQuestionSection({
       console.log("Saving answer to DB:", capturedAnswer);
 
       const feedbackPrompt = `Question: ${mockInterviewQuestion[activeQuestionIndex]?.question}, 
-        User Answer: ${capturedAnswer}. Please provide a rating and feedback in JSON format with fields: "rating" and "feedback".`;
+        User Answer: ${capturedAnswer}. Please provide a rating out of 10 and feedback in JSON format with fields: "rating" and "feedback".Please dont look for punctuation mistakes!Go easy on ratings`;
 
       const result = await chatSession.sendMessage(feedbackPrompt);
       const mockJsonResp = result.response
