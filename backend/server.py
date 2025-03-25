@@ -1,245 +1,312 @@
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import logging
+from pydantic import BaseModel
+from typing import Optional
+import uvicorn
+import cv2
 import numpy as np
-import io
-import librosa
-from pydub import AudioSegment  # Requires: pip install pydub and ffmpeg installed
-from voice_rater import VoiceRatingAnalyzer  # Ensure this is defined or remove if not used
+import tempfile
+import os
+import mediapipe as mp
+import math
+from datetime import datetime
 
 app = FastAPI()
 
-# Configuration
-FRONTEND_URL = "http://localhost:3000"
-
-# Logger setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# CORS setup
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
+    allow_origins=["*"],  # Adjust in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class SimpleVoiceAnalyzer:
-    """A simple voice analyzer using basic signal processing."""
+# Initialize MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+# Eye landmark indices
+LEFT_EYE_LANDMARKS = [362, 263, 386, 374, 385, 380]  # Outer points of left eye
+RIGHT_EYE_LANDMARKS = [33, 133, 160, 158, 144, 153]   # Outer points of right eye
+LEFT_IRIS_LANDMARKS = [468, 469, 470, 471, 472]      # Left iris landmarks
+RIGHT_IRIS_LANDMARKS = [473, 474, 475, 476, 477]     # Right iris landmarks
+
+class EyeMovementResult(BaseModel):
+    left_count: int
+    right_count: int
+    center_count: int
+    total_frames: int
+    metrics: dict
+
+@app.get("/health-check")
+async def health_check():
+    return {"status": "online"}
+
+@app.post("/upload-video/{user_email}/{question_index}")
+async def upload_video(
+    user_email: str,
+    question_index: int,
+    video: UploadFile = File(...),
+    transcription: Optional[str] = Form(None)
+):
+    print(f"\n====== Processing video for user: {user_email}, question: {question_index} ======")
+    print(f"Received video file: {video.filename}, size: {video.size} bytes")
+    if transcription:
+        print(f"Transcription length: {len(transcription)} characters")
     
-    def __init__(self, sample_rate: int = 22050):
-        self.sample_rate = sample_rate
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_file:
+        temp_file_path = temp_file.name
+        contents = await video.read()
+        temp_file.write(contents)
+        print(f"Saved temporary video to: {temp_file_path}")
 
-    def load_audio(self, audio_bytes: bytes) -> (np.ndarray, int):
-        """
-        Convert the input WebM audio (as bytes) to a WAV waveform using PyDub
-        and load it with librosa.
-        """
-        try:
-            audio_stream = io.BytesIO(audio_bytes)
-            # Load the WebM file using PyDub (ensure the file is indeed in WebM format)
-            audio_segment = AudioSegment.from_file(audio_stream, format="webm")
-            # Export to WAV format in-memory
-            wav_io = io.BytesIO()
-            audio_segment.export(wav_io, format="wav")
-            wav_io.seek(0)
-            # Load the WAV data using librosa
-            audio, sr = librosa.load(wav_io, sr=self.sample_rate)
-            return audio, sr
-        except Exception as e:
-            logger.error(f"Error in load_audio: {str(e)}", exc_info=True)
-            raise
-
-    def analyze_audio(self, audio_data: bytes) -> dict:
-        """
-        Perform basic analysis (volume, clarity, rhythm) on the raw bytes.
-        (This method assumes a raw PCM interpretation; adjust dtype if needed.)
-        """
-        try:
-            # Convert bytes to numpy array of 8-bit integers.
-            audio_array = np.frombuffer(audio_data, dtype=np.int8)
-            if len(audio_array) == 0:
-                return {"error": "Empty audio data"}
-            
-            # Normalize the audio data to [-1, 1]
-            audio_float = audio_array.astype(np.float32) / np.iinfo(np.int8).max
-            
-            # Calculate basic metrics
-            metrics = self._calculate_metrics(audio_float)
-            
-            return {
-                "status": "success",
-                "metrics": metrics,
-                "feedback": self._generate_feedback(metrics["overall_score"])
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in analyze_audio: {str(e)}", exc_info=True)
-            return {"error": f"Analysis failed: {str(e)}"}
-
-    def _calculate_metrics(self, audio_data: np.ndarray) -> dict:
-        """Calculate various basic audio metrics (volume, clarity, rhythm)."""
-        try:
-            # Volume (RMS energy)
-            rms = np.sqrt(np.mean(np.square(audio_data)))
-            volume_score = min(100, rms * 100)
-
-            # Clarity (peak-to-RMS ratio)
-            peak = np.max(np.abs(audio_data))
-            clarity_score = min(100, (peak / (rms + 1e-6)) * 50)
-
-            # Rhythm (zero crossings rate)
-            zero_crossings = np.sum(np.diff(np.signbit(audio_data).astype(int)))
-            rhythm_score = min(100, zero_crossings / len(audio_data) * 1000)
-
-            overall_score = np.mean([volume_score, clarity_score, rhythm_score])
-
-            return {
-                "overall_score": round(float(overall_score), 2),
-                "volume_score": round(float(volume_score), 2),
-                "clarity_score": round(float(clarity_score), 2),
-                "rhythm_score": round(float(rhythm_score), 2)
-            }
-        except Exception as e:
-            logger.error(f"Error in _calculate_metrics: {str(e)}", exc_info=True)
-            raise
-
-    def analyze_pitch(self, audio_bytes: bytes) -> float:
-        """
-        Analyze pitch characteristics of the audio using librosa.yin.
-        Computes the fundamental frequency (F0) over time and calculates
-        a stability score based on the coefficient of variation.
-        """
-        try:
-            audio, sr = self.load_audio(audio_bytes)
-            # Set minimum and maximum frequencies for pitch detection.
-            fmin = 50   # Adjust as needed for your voice recordings.
-            fmax = 300
-            # Use librosa.yin to estimate the fundamental frequency over time.
-            pitch_values = librosa.yin(audio, fmin=fmin, fmax=fmax, sr=sr)
-            valid_pitches = pitch_values[pitch_values > 0]
-            if valid_pitches.size == 0:
-                return 0.0
-            pitch_mean = np.mean(valid_pitches)
-            pitch_std = np.std(valid_pitches)
-            # Compute stability as a percentage: lower variation yields higher score.
-            stability_score = max(0, 100 - (pitch_std / pitch_mean * 100))
-            return stability_score
-        except Exception as e:
-            logger.error(f"Error in analyze_pitch: {str(e)}", exc_info=True)
-            return 0.0
-
-    def analyze_tone(self, audio_wave: np.ndarray) -> float:
-        """Analyze tone quality based on spectral characteristics."""
-        try:
-            stft = librosa.stft(audio_wave)
-            db = librosa.amplitude_to_db(np.abs(stft))
-            tone_score = min(100, max(0, np.mean(db) + 100))
-            return tone_score
-        except Exception as e:
-            logger.error(f"Error in analyze_tone: {str(e)}", exc_info=True)
-            return 0.0
-
-    def analyze_frequency_variation(self, audio_wave: np.ndarray) -> float:
-        """Analyze frequency variation."""
-        try:
-            spectral_centroids = librosa.feature.spectral_centroid(y=audio_wave, sr=self.sample_rate)[0]
-            variation_score = min(100, max(0, 100 - (np.std(spectral_centroids) * 0.1)))
-            return variation_score
-        except Exception as e:
-            logger.error(f"Error in analyze_frequency_variation: {str(e)}", exc_info=True)
-            return 0.0
-
-    def analyze_pauses(self, audio_wave: np.ndarray) -> float:
-        """Analyze speech pauses based on RMS energy."""
-        try:
-            rms = librosa.feature.rms(y=audio_wave)[0]
-            silence_threshold = np.mean(rms) * 0.5
-            pauses = np.sum(rms < silence_threshold) / len(rms)
-            pause_score = min(100, max(0, 100 - abs(pauses - 0.2) * 200))
-            return pause_score
-        except Exception as e:
-            logger.error(f"Error in analyze_pauses: {str(e)}", exc_info=True)
-            return 0.0
-
-    def analyze_additional_features(self, audio_bytes: bytes) -> dict:
-        """
-        Analyze additional features (tone, frequency variation, and pauses)
-        from the audio waveform.
-        """
-        try:
-            audio_wave, sr = self.load_audio(audio_bytes)
-            tone_score = self.analyze_tone(audio_wave)
-            freq_variation = self.analyze_frequency_variation(audio_wave)
-            pause_score = self.analyze_pauses(audio_wave)
-            return {
-                "tone_score": round(float(tone_score), 2),
-                "frequency_variation": round(float(freq_variation), 2),
-                "pause_score": round(float(pause_score), 2)
-            }
-        except Exception as e:
-            logger.error(f"Error in analyze_additional_features: {str(e)}", exc_info=True)
-            return {
-                "tone_score": 0.0,
-                "frequency_variation": 0.0,
-                "pause_score": 0.0
-            }
-
-    def _generate_feedback(self, score: float) -> str:
-        """Generate feedback based on the overall score."""
-        if score > 85:
-            return "Excellent voice quality! Your speech is clear and well-modulated."
-        elif score > 70:
-            return "Good voice quality. Minor improvements could be made in clarity and modulation."
-        elif score > 50:
-            return "Average voice quality. Try speaking more clearly and varying your tone."
-        else:
-            return "Voice quality needs improvement. Focus on speaking clearly and maintaining consistent volume."
-
-@app.post("/upload-audio/{userEmail}/{questionId}")
-async def upload_audio(userEmail: str, questionId: int, audio: UploadFile):
     try:
-        # Read the audio data from the uploaded file (in-memory, no file saving)
-        contents = await audio.read()
-        if not contents:
-            raise HTTPException(status_code=400, detail="Empty audio file")
+        # Process the video to track eye movements
+        print("Starting eye movement analysis...")
+        results = analyze_eye_movements(temp_file_path)
         
-        # Create analyzer and process audio
-        analyzer = SimpleVoiceAnalyzer()
+        # Print detailed results
+        print("\n=== EYE MOVEMENT ANALYSIS RESULTS ===")
+        print(f"Left movements:  {results['left_count']}")
+        print(f"Right movements: {results['right_count']}")
+        print(f"Center focus:    {results['center_count']}")
+        print(f"Total frames:    {results['total_frames']}")
+        print("===================================")
         
-        # Basic analysis (volume, clarity, rhythm)
-        result = analyzer.analyze_audio(contents)
+        # Additional metrics
+        attention_score = calculate_attention_score(results)
+        eye_movement_ratio = calculate_eye_movement_ratio(results)
+        wpm = estimate_wpm(transcription) if transcription else None
+        filler_words = count_filler_words(transcription) if transcription else 0
         
-        # Compute pitch score using the updated method
-        pitch_score = analyzer.analyze_pitch(contents)
+        print("\n=== CALCULATED METRICS ===")
+        print(f"Attention score:      {attention_score:.2f}")
+        print(f"Eye movement ratio:   {eye_movement_ratio:.2f}")
+        if wpm:
+            print(f"Estimated speech rate: {wpm} WPM")
+        if transcription:
+            print(f"Filler word count:     {filler_words}")
+        print("=========================")
         
-        # Compute additional features (tone, frequency variation, pauses)
-        additional = analyzer.analyze_additional_features(contents)
+        # Combine results with transcription and metrics
+        response_data = {
+            "success": True,
+            "user_email": user_email,
+            "question_index": question_index,
+            "eye_movements": results,
+            "metrics": {
+                "wpm": wpm,
+                "clarity": 0.85,  # Placeholder - would need audio analysis
+                "confidence": 0.75,  # Placeholder - would need deeper analysis
+                "filler_words": filler_words,
+                "eye_movement_ratio": eye_movement_ratio,
+                "attention_score": attention_score
+            }
+        }
         
-        # Merge all scores into the metrics dictionary
-        result["metrics"]["pitch_score"] = round(float(pitch_score), 2)
-        result["metrics"]["tone_score"] = additional["tone_score"]
-        result["metrics"]["frequency_variation"] = additional["frequency_variation"]
-        result["metrics"]["pause_score"] = additional["pause_score"]
-            
-        if "error" in result:
-            logger.error(f"Analysis error: {result['error']}")
-            raise HTTPException(status_code=500, detail=result["error"])
-            
-        return JSONResponse(content=result)
-
+        print("\nAnalysis complete, returning results to frontend")
+        return response_data
+    
     except Exception as e:
-        logger.error(f"Error processing audio: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process audio: {str(e)}"
-        )
+        print(f"\nERROR: Video processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Video processing failed: {str(e)}")
+    
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+            print(f"Removed temporary file: {temp_file_path}")
+
+def analyze_eye_movements(video_path):
+    """
+    Analyze eye movements from a video file.
+    Returns counts of left, right, and center eye movements.
+    """
+    cap = cv2.VideoCapture(video_path)
+    
+    if not cap.isOpened():
+        raise Exception("Could not open video file")
+    
+    # Get video properties for debugging
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / fps if fps > 0 else 0
+    
+    print(f"Video properties: {total_frames} frames, {fps:.2f} FPS, {duration:.2f} seconds")
+    
+    frame_count = 0
+    processed_count = 0
+    left_count = 0
+    right_count = 0
+    center_count = 0
+    
+    # For tracking movement (to avoid counting small jitters)
+    prev_direction = "center"
+    direction_buffer = []
+    buffer_size = 5  # Number of frames to consider for a stable direction
+    
+    # For real-time feedback during processing
+    progress_interval = max(1, total_frames // 10)
+    
+    print("Starting frame-by-frame analysis...")
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            break
+            
+        frame_count += 1
+        
+        # Print progress
+        if frame_count % progress_interval == 0:
+            percent_done = (frame_count / total_frames) * 100 if total_frames > 0 else 0
+            print(f"Processing: {percent_done:.1f}% complete ({frame_count}/{total_frames} frames)")
+        
+        # Skip frames for performance (process every 3rd frame)
+        if frame_count % 3 != 0:
+            continue
+            
+        processed_count += 1
+        
+        # Convert to RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process frame with MediaPipe
+        results = face_mesh.process(rgb_frame)
+        
+        if results.multi_face_landmarks:
+            face_landmarks = results.multi_face_landmarks[0]
+            
+            # Get iris and eye landmarks
+            landmarks = face_landmarks.landmark
+            
+            # Get eye direction based on iris position relative to eye corners
+            direction = determine_eye_direction(landmarks, frame.shape)
+            
+            # Add to buffer for smoothing
+            direction_buffer.append(direction)
+            if len(direction_buffer) > buffer_size:
+                direction_buffer.pop(0)
+            
+            # Only count if we have enough stable readings
+            if len(direction_buffer) == buffer_size:
+                # Check if the last N frames have the same direction
+                if all(d == direction_buffer[0] for d in direction_buffer):
+                    current_stable_direction = direction_buffer[0]
+                    
+                    # Only count if direction has changed
+                    if current_stable_direction != prev_direction:
+                        if current_stable_direction == "left":
+                            left_count += 1
+                            print(f"Frame {frame_count}: Detected LEFT eye movement")
+                        elif current_stable_direction == "right":
+                            right_count += 1
+                            print(f"Frame {frame_count}: Detected RIGHT eye movement")
+                        elif current_stable_direction == "center":
+                            center_count += 1
+                            print(f"Frame {frame_count}: Detected CENTER eye focus")
+                        
+                        prev_direction = current_stable_direction
+    
+    cap.release()
+    
+    print(f"\nProcessed {processed_count} frames out of {frame_count} total frames")
+    print(f"Detected movements: {left_count} left, {right_count} right, {center_count} center")
+    
+    return {
+        "left_count": left_count,
+        "right_count": right_count,
+        "center_count": center_count,
+        "total_frames": frame_count,
+        "processed_frames": processed_count
+    }
+
+def determine_eye_direction(landmarks, frame_shape):
+    """
+    Determine eye gaze direction based on iris position relative to eye corners.
+    Returns "left", "right", or "center".
+    """
+    # Get landmarks for left and right iris
+    left_iris = np.mean([(landmarks[idx].x, landmarks[idx].y) for idx in LEFT_IRIS_LANDMARKS], axis=0)
+    right_iris = np.mean([(landmarks[idx].x, landmarks[idx].y) for idx in RIGHT_IRIS_LANDMARKS], axis=0)
+    
+    # Get eye corner landmarks
+    left_eye_left = (landmarks[LEFT_EYE_LANDMARKS[0]].x, landmarks[LEFT_EYE_LANDMARKS[0]].y)
+    left_eye_right = (landmarks[LEFT_EYE_LANDMARKS[3]].x, landmarks[LEFT_EYE_LANDMARKS[3]].y)
+    
+    right_eye_left = (landmarks[RIGHT_EYE_LANDMARKS[0]].x, landmarks[RIGHT_EYE_LANDMARKS[0]].y)
+    right_eye_right = (landmarks[RIGHT_EYE_LANDMARKS[3]].x, landmarks[RIGHT_EYE_LANDMARKS[3]].y)
+    
+    # Calculate relative positions
+    left_eye_width = left_eye_right[0] - left_eye_left[0]
+    left_eye_iris_rel_pos = (left_iris[0] - left_eye_left[0]) / left_eye_width if left_eye_width > 0 else 0.5
+    
+    right_eye_width = right_eye_right[0] - right_eye_left[0]
+    right_eye_iris_rel_pos = (right_iris[0] - right_eye_left[0]) / right_eye_width if right_eye_width > 0 else 0.5
+    
+    # Average both eyes
+    avg_rel_pos = (left_eye_iris_rel_pos + right_eye_iris_rel_pos) / 2
+    
+    # Determine direction
+    if avg_rel_pos < 0.45:  # Looking left
+        return "left"
+    elif avg_rel_pos > 0.55:  # Looking right
+        return "right"
+    else:  # Looking center
+        return "center"
+
+def calculate_attention_score(results):
+    """Calculate an attention score based on eye movements"""
+    total_movements = results["left_count"] + results["right_count"] + results["center_count"]
+    center_ratio = results["center_count"] / max(total_movements, 1)
+    
+    # Higher center focus generally indicates better attention
+    attention_score = (center_ratio * 0.7) + (0.3 * (1.0 - (results["left_count"] + results["right_count"]) / max(results["total_frames"], 1)))
+    
+    return min(max(attention_score, 0), 1)  # Scale between 0 and 1
+
+def calculate_eye_movement_ratio(results):
+    """Calculate ratio of eye movements to total frames"""
+    total_movements = results["left_count"] + results["right_count"] + results["center_count"]
+    return total_movements / max(results["processed_frames"], 1)  # Adjust for processed frames
+
+def estimate_wpm(transcription):
+    """Estimate words per minute from transcription"""
+    if not transcription:
+        return 0
+        
+    word_count = len(transcription.split())
+    # Assuming average answer time of 60 seconds
+    estimated_wpm = word_count
+    return estimated_wpm
+
+def count_filler_words(transcription):
+    """Count filler words in transcription"""
+    if not transcription:
+        return 0
+        
+    filler_words = ["um", "uh", "like", "you know", "sort of", "kind of", "basically"]
+    count = 0
+    words = transcription.lower().split()
+    
+    for filler in filler_words:
+        if " " in filler:  # Multi-word fillers
+            count += transcription.lower().count(filler)
+        else:  # Single-word fillers
+            count += words.count(filler)
+            
+    return count
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    print("\n=================================================================")
+    print("Starting Eye Movement Analysis Server")
+    print("This server will analyze video recordings and track eye movements")
+    print("=================================================================\n")
+    uvicorn.run("server:app", host="0.0.0.0", port=8001, reload=True)

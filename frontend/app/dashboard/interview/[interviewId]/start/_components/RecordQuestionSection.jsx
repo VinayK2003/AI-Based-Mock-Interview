@@ -6,7 +6,7 @@ import { db } from "../../../../../../utils/db";
 import { UserAnswer } from "../../../../../../utils/schema";
 import { useParams } from "next/navigation";
 import useSpeechToText from "react-hook-speech-to-text";
-import { Mic, StopCircle } from "lucide-react";
+import { Mic, StopCircle, Video, VideoOff } from "lucide-react";
 import { toast } from "sonner";
 import { chatSession } from "../../../../../../utils/GeminiAIModal";
 import moment from "moment";
@@ -18,13 +18,17 @@ function RecordQuestionSection({
   interviewData,
 }) {
   const [recording, setRecording] = useState(false);
+  const [videoRecording, setVideoRecording] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [userAnswer, setUserAnswer] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const mediaRecorderRef = useRef(null);
+  const videoRecorderRef = useRef(null);
+  const webcamRef = useRef(null);
   const chunksRef = useRef([]);
+  const videoChunksRef = useRef([]);
   const finalAnswerRef = useRef("");
   const { user } = useUser();
   const params = useParams();
@@ -54,6 +58,9 @@ function RecordQuestionSection({
         if (recording) {
           stopRecording();
         }
+        if (videoRecording) {
+          stopVideoRecording();
+        }
       }
     };
 
@@ -61,7 +68,7 @@ function RecordQuestionSection({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [recording]);
+  }, [recording, videoRecording]);
 
   useEffect(() => {
     if (!isSubmitted) {
@@ -113,9 +120,62 @@ function RecordQuestionSection({
       mediaRecorder.start();
       setRecording(true);
       startSpeechToText();
+      startVideoRecording(); // Start video recording alongside audio
     } catch (error) {
       setError(`Error accessing microphone: ${error.message}`);
       console.error("Error accessing microphone", error);
+    }
+  };
+
+  const startVideoRecording = async () => {
+    try {
+      if (!webcamRef.current || !webcamRef.current.video) {
+        throw new Error("Webcam not initialized");
+      }
+
+      const stream = webcamRef.current.video.srcObject;
+      if (!stream) {
+        throw new Error("No webcam stream available");
+      }
+
+      const videoRecorder = new MediaRecorder(stream, {
+        mimeType: "video/webm;codecs=vp9",
+      });
+
+      videoRecorderRef.current = videoRecorder;
+      videoChunksRef.current = [];
+
+      videoRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          videoChunksRef.current.push(event.data);
+        }
+      };
+
+      videoRecorder.onstop = async () => {
+        try {
+          const videoBlob = new Blob(videoChunksRef.current, {
+            type: "video/webm;codecs=vp9",
+          });
+          await sendVideo(videoBlob);
+        } catch (error) {
+          console.error("Error processing video:", error);
+        }
+      };
+
+      videoRecorder.start(1000); // Collect data every second
+      setVideoRecording(true);
+      toast.success("Video recording started");
+    } catch (error) {
+      setError(`Error recording video: ${error.message}`);
+      console.error("Error recording video", error);
+    }
+  };
+
+  const stopVideoRecording = () => {
+    if (videoRecorderRef.current && videoRecording) {
+      videoRecorderRef.current.stop();
+      setVideoRecording(false);
+      toast.success("Video recording stopped");
     }
   };
 
@@ -132,6 +192,65 @@ function RecordQuestionSection({
       if (capturedAnswer) {
         finalAnswerRef.current = capturedAnswer;
       }
+
+      // Stop video recording
+      stopVideoRecording();
+    }
+  };
+
+  const sendVideo = async (blob) => {
+    try {
+      if (!blob || blob.size === 0) {
+        throw new Error("No video data recorded");
+      }
+
+      const capturedAnswer = finalAnswerRef.current || userAnswer;
+      console.log("Sending video to server with transcription:", capturedAnswer);
+
+      const formData = new FormData();
+      formData.append("video", blob, "recording.webm");
+      formData.append("transcription", capturedAnswer);
+
+      const userEmail = user?.primaryEmailAddress?.emailAddress;
+      if (!userEmail) {
+        throw new Error("User email not found");
+      }
+
+      toast.info("Analyzing eye movements...");
+
+      const response = await fetch(
+        `http://localhost:8001/upload-video/${encodeURIComponent(
+          userEmail
+        )}/${activeQuestionIndex}`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail || `Video server error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("Eye movement analysis results:", data);
+      
+      // Optionally update UI with eye movement data
+      toast.success("Eye movement analysis complete");
+      
+      // You could combine this with the audio analysis results
+      if (analysisResult) {
+        setAnalysisResult({
+          ...analysisResult,
+          eyeMovements: data.eye_movements,
+          videoMetrics: data.metrics
+        });
+      }
+      
+    } catch (error) {
+      console.error("Error sending video:", error);
+      toast.error(`Video analysis failed: ${error.message}`);
     }
   };
 
@@ -270,13 +389,30 @@ function RecordQuestionSection({
         <img src="/webcam3.png" alt="WebCAM" width={140} height={140} />
       </div>
       <div className="flex flex-col justify-center items-center rounded-lg p-5 mt-5 bg-black">
-        <Webcam mirrored={true} style={{ height: 300, width: "100%", zIndex: 100 }} />
+        <Webcam 
+          ref={webcamRef}
+          mirrored={true} 
+          style={{ height: 300, width: "100%", zIndex: 100 }} 
+          audio={false}
+          videoConstraints={{
+            width: 640,
+            height: 480,
+            facingMode: "user"
+          }}
+        />
       </div>
 
       {recording && (
         <div className="mt-4 p-4 bg-white rounded shadow w-full max-w-2xl">
           <h3 className="font-bold mb-2">Current Answer:</h3>
           <p>{userAnswer || "Recording..."}</p>
+          {videoRecording && (
+            <div className="mt-2">
+              <span className="text-sm text-red-500 animate-pulse flex items-center gap-1">
+                <Video size={16} /> Video recording active
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -302,6 +438,31 @@ function RecordQuestionSection({
       {error && (
         <div className="mt-4 p-4 bg-red-100 text-red-700 rounded">
           {error}
+        </div>
+      )}
+
+      {analysisResult && (
+        <div className="mt-4 p-4 bg-green-50 rounded shadow w-full max-w-2xl">
+          <h3 className="font-bold mb-2">Analysis Results:</h3>
+          {analysisResult.videoMetrics && (
+            <div className="mb-3">
+              <h4 className="font-semibold">Eye Movement Analysis:</h4>
+              <ul className="list-disc pl-5 mt-1">
+                <li>Attention Score: {(analysisResult.videoMetrics.attention_score * 100).toFixed(1)}%</li>
+                <li>Eye Movement Ratio: {analysisResult.videoMetrics.eye_movement_ratio.toFixed(2)}</li>
+              </ul>
+            </div>
+          )}
+          {analysisResult.metrics && (
+            <div>
+              <h4 className="font-semibold">Voice Analysis:</h4>
+              <ul className="list-disc pl-5 mt-1">
+                {Object.entries(analysisResult.metrics).map(([key, value]) => (
+                  <li key={key}>{key.replace(/_/g, ' ')}: {typeof value === 'number' ? value.toFixed(2) : value}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
