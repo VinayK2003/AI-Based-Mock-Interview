@@ -20,6 +20,9 @@ export const UserAnswer = pgTable('userAnswer', {
     feedback: text('feedback'),
     rating: varchar('rating'),
     userEmail: varchar('userEmail'),
-    createdAt: varchar('createadAt'),
+    createdAt: varchar('createdAt'),
+    bleuScore: varchar('bleuScore').default(null),
+    fillerWordsCount: varchar('fillerWordsCount').default(null),
     voiceMetrics: jsonb('voiceMetrics').default(null),
+    videoMetrics: jsonb('videoMetrics').default(null), // New column added
 });

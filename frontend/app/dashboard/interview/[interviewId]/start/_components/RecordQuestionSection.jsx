@@ -203,21 +203,21 @@ function RecordQuestionSection({
       if (!blob || blob.size === 0) {
         throw new Error("No video data recorded");
       }
-
+  
       const capturedAnswer = finalAnswerRef.current || userAnswer;
       console.log("Sending video to server with transcription:", capturedAnswer);
-
+  
       const formData = new FormData();
       formData.append("video", blob, "recording.webm");
       formData.append("transcription", capturedAnswer);
-
+  
       const userEmail = user?.primaryEmailAddress?.emailAddress;
       if (!userEmail) {
         throw new Error("User email not found");
       }
-
+  
       toast.info("Analyzing eye movements...");
-
+  
       const response = await fetch(
         `http://localhost:8001/upload-video/${encodeURIComponent(
           userEmail
@@ -227,26 +227,30 @@ function RecordQuestionSection({
           body: formData,
         }
       );
-
+  
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(errorData?.detail || `Video server error: ${response.status}`);
       }
       
-      const data = await response.json();
-      console.log("Eye movement analysis results:", data);
+      const videoAnalysisData = await response.json();
+      console.log("Eye movement analysis results:", videoAnalysisData.analysis);
       
-      // Optionally update UI with eye movement data
+      // Update the existing database record with video analysis metrics
+      await db.update(UserAnswer).set({
+        videoMetrics: videoAnalysisData.analysis, // Directly store the JSON object
+      })
+      .where(
+        eq(UserAnswer.mockIdRef, params.interviewId) // Use the interview ID from URL params
+      );
+      
       toast.success("Eye movement analysis complete");
       
-      // You could combine this with the audio analysis results
-      if (analysisResult) {
-        setAnalysisResult({
-          ...analysisResult,
-          eyeMovements: data.eye_movements,
-          videoMetrics: data.metrics
-        });
-      }
+      // Update analysis result state
+      setAnalysisResult(prevResults => ({
+        ...prevResults,
+        videoMetrics: videoAnalysisData.analysis
+      }));
       
     } catch (error) {
       console.error("Error sending video:", error);
@@ -257,27 +261,34 @@ function RecordQuestionSection({
   const sendAudio = async (blob) => {
     setLoading(true);
     setError(null);
-
+  
     try {
       if (!blob || blob.size === 0) {
         throw new Error("No audio data recorded");
       }
-
+  
       const capturedAnswer = finalAnswerRef.current || userAnswer;
       console.log("Answer being sent to server:", capturedAnswer);
-
+  
       if (!capturedAnswer) {
         throw new Error("No answer was recorded");
       }
-
+  
+      // Get the correct answer for the current question
+      const correctAnswer = 
+        mockInterviewQuestion[activeQuestionIndex].answerExample ||
+        mockInterviewQuestion[activeQuestionIndex].answer;
+  
       const formData = new FormData();
       formData.append("audio", blob, "recording.webm");
-
+      formData.append("capturedAnswer", capturedAnswer);
+      formData.append("correctAnswer", correctAnswer);
+  
       const userEmail = user?.primaryEmailAddress?.emailAddress;
       if (!userEmail) {
         throw new Error("User email not found");
       }
-
+  
       const response = await fetch(
         `http://localhost:8000/upload-audio/${encodeURIComponent(
           userEmail
@@ -287,14 +298,14 @@ function RecordQuestionSection({
           body: formData,
         }
       );
-
+  
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(errorData?.detail || `Server error: ${response.status}`);
       }
       const data = await response.json();
       setAnalysisResult(data);
-
+  
       await updateUserAnswer(data.metrics, capturedAnswer);
     } catch (error) {
       setError(`Failed to process recording: ${error.message}`);
@@ -303,7 +314,7 @@ function RecordQuestionSection({
       setLoading(false);
     }
   };
-
+  
   const updateUserAnswer = async (voiceMetrics = null, capturedAnswer) => {
     if (!capturedAnswer) {
       setError("No answer to submit");
@@ -321,7 +332,9 @@ function RecordQuestionSection({
       const feedbackPrompt = `Question: ${mockInterviewQuestion[activeQuestionIndex]?.question}, 
         User Answer: ${capturedAnswer}. Please provide a rating out of 10 and feedback in JSON format with fields: "rating" and "feedback".Please dont look for punctuation mistakes!Go easy on ratings`;
 
-      const result = await chatSession.sendMessage(feedbackPrompt);
+      const result = await chatSession.sendMessage(feedbackPrompt,{
+        generation_config:{temperature:0.0},
+      });
       const mockJsonResp = result.response
         .text()
         .replace("```json", "")
@@ -347,7 +360,7 @@ function RecordQuestionSection({
       if (!nlpData.success) {
         throw new Error(nlpData.error);
       }
-
+      console.log("nlpdata",nlpData)
       await db
         .update(UserAnswer)
         .set({
@@ -357,6 +370,8 @@ function RecordQuestionSection({
           feedback: JsonFeedbackResp?.feedback,
           rating: JsonFeedbackResp?.rating,
           createdAt: moment().format("DD-MM-yyyy"),
+          bleuScore: nlpData.metrics.bleuScore,
+          fillerWordsCount:nlpData.metrics.fillerWordsCount,
           userEmail: user?.primaryEmailAddress.emailAddress,
           voiceMetrics: voiceMetrics || null,
         })
@@ -438,31 +453,6 @@ function RecordQuestionSection({
       {error && (
         <div className="mt-4 p-4 bg-red-100 text-red-700 rounded">
           {error}
-        </div>
-      )}
-
-      {analysisResult && (
-        <div className="mt-4 p-4 bg-green-50 rounded shadow w-full max-w-2xl">
-          <h3 className="font-bold mb-2">Analysis Results:</h3>
-          {analysisResult.videoMetrics && (
-            <div className="mb-3">
-              <h4 className="font-semibold">Eye Movement Analysis:</h4>
-              <ul className="list-disc pl-5 mt-1">
-                <li>Attention Score: {(analysisResult.videoMetrics.attention_score * 100).toFixed(1)}%</li>
-                <li>Eye Movement Ratio: {analysisResult.videoMetrics.eye_movement_ratio.toFixed(2)}</li>
-              </ul>
-            </div>
-          )}
-          {analysisResult.metrics && (
-            <div>
-              <h4 className="font-semibold">Voice Analysis:</h4>
-              <ul className="list-disc pl-5 mt-1">
-                {Object.entries(analysisResult.metrics).map(([key, value]) => (
-                  <li key={key}>{key.replace(/_/g, ' ')}: {typeof value === 'number' ? value.toFixed(2) : value}</li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       )}
     </div>
