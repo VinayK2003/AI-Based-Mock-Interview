@@ -1,12 +1,27 @@
-from fastapi import FastAPI, UploadFile, HTTPException,File,Request
+from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import numpy as np
 import io
 import librosa
-from pydub import AudioSegment  # Requires: pip install pydub and ffmpeg installed
-from voice_rater import VoiceRatingAnalyzer  # Ensure this is defined or remove if not used
+from pydub import AudioSegment
+import json
+from typing import Optional
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import nltk
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.corpus import stopwords
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('punkt')
+    nltk.download('stopwords')
 
 app = FastAPI()
 
@@ -28,6 +43,170 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class TextAnalyzer:
+    """Handles text-based analysis for semantic similarity and key point extraction."""
+    
+    def __init__(self):
+        self.stop_words = set(stopwords.words('english'))
+        self.vectorizer = TfidfVectorizer(stop_words='english')
+    
+    def calculate_semantic_similarity(self, reference_answer: str, candidate_answer: str) -> float:
+        """
+        Calculate semantic similarity using TF-IDF vectors and cosine similarity.
+        """
+        try:
+            # If both texts are identical, return 1.0
+            if reference_answer.strip() == candidate_answer.strip():
+                return 1.0
+                
+            # Create TF-IDF vectors
+            tfidf_matrix = self.vectorizer.fit_transform([reference_answer, candidate_answer])
+            
+            # Calculate cosine similarity
+            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+            return float(similarity)
+        except Exception as e:
+            logger.error(f"Error calculating semantic similarity: {str(e)}", exc_info=True)
+            return 0.0
+    
+    def extract_key_points(self, text: str, max_points: int = 5) -> list:
+        """
+        Extract key points from a text using simple TF-IDF scoring.
+        Returns a list of sentences ranked by importance.
+        """
+        try:
+            # Split into sentences
+            sentences = sent_tokenize(text)
+            if not sentences:
+                return []
+            
+            # Create a TF-IDF matrix for the sentences
+            tfidf_matrix = self.vectorizer.fit_transform(sentences)
+            
+            # Calculate sentence scores (sum of TF-IDF values)
+            feature_names = self.vectorizer.get_feature_names_out()
+            sentence_scores = []
+            
+            for i, sent in enumerate(sentences):
+                score = sum(tfidf_matrix[i, self.vectorizer.vocabulary_[word]] 
+                          for word in sent.lower().split() 
+                          if word in self.vectorizer.vocabulary_)
+                sentence_scores.append((i, score))
+            
+            # Sort by score and get the top sentences
+            top_sentences = sorted(sentence_scores, key=lambda x: x[1], reverse=True)
+            
+            # Return the top sentences as key points
+            key_points = [{"point": sentences[idx], "weight": min(int(score * 10) + 1, 10)} 
+                         for idx, score in top_sentences[:max_points]]
+            
+            return key_points
+        except Exception as e:
+            logger.error(f"Error extracting key points: {str(e)}", exc_info=True)
+            return []
+    
+    def check_key_points_coverage(self, reference_key_points: list, candidate_answer: str) -> dict:
+        """
+        Check how many key points from the reference answer are covered in the candidate answer.
+        Returns a score and feedback on missing points.
+        """
+        try:
+            score = 0
+            max_possible_score = sum(point["weight"] for point in reference_key_points)
+            feedback = []
+            
+            if max_possible_score == 0:
+                return {"score": 0, "percentage": 0, "feedback": ["No key points to evaluate"]}
+            
+            for point in reference_key_points:
+                # Check if the candidate's answer contains this key point
+                # Using a simple substring check for now
+                if self.calculate_semantic_similarity(point["point"], candidate_answer) > 0.7 or \
+                   point["point"].lower() in candidate_answer.lower():
+                    score += point["weight"]
+                    feedback.append(f"✓ Included key point: {point['point']}")
+                else:
+                    feedback.append(f"✗ Missing key point: {point['point']}")
+            
+            percentage_score = (score / max_possible_score) * 100
+            
+            return {
+                "score": score,
+                "percentage": round(percentage_score, 2),
+                "feedback": feedback
+            }
+        except Exception as e:
+            logger.error(f"Error checking key points coverage: {str(e)}", exc_info=True)
+            return {"score": 0, "percentage": 0, "feedback": [f"Error: {str(e)}"]}
+    
+    def analyze_text(self, reference_answer: str, candidate_answer: str) -> dict:
+        """
+        Perform complete text analysis, combining semantic similarity and key point extraction.
+        """
+        try:
+            # Calculate semantic similarity
+            similarity = self.calculate_semantic_similarity(reference_answer, candidate_answer)
+            
+            # Extract key points from reference answer
+            key_points = self.extract_key_points(reference_answer)
+            
+            # Check key points coverage
+            key_point_result = self.check_key_points_coverage(key_points, candidate_answer)
+            
+            # Generate semantic rating
+            semantic_rating = self.get_rating(similarity)
+            
+            # Detect filler words
+            filler_words_count = self.count_filler_words(candidate_answer)
+            
+            # Calculate overall score (weighted average)
+            similarity_weight = 0.4
+            key_point_weight = 0.6
+            overall_score = (similarity * 100 * similarity_weight) + (key_point_result["percentage"] * key_point_weight)
+            
+            return {
+                "semantic_similarity": round(similarity, 3),
+                "semantic_rating": semantic_rating,
+                "key_points": key_points,
+                "key_point_coverage": key_point_result,
+                "filler_words_count": filler_words_count,
+                "overall_score": round(overall_score, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error in analyze_text: {str(e)}", exc_info=True)
+            return {"error": f"Text analysis failed: {str(e)}"}
+    
+    def get_rating(self, similarity_score: float) -> str:
+        """Convert similarity score to rating."""
+        if similarity_score > 0.85:
+            return "Excellent"
+        elif similarity_score > 0.70:
+            return "Good"
+        elif similarity_score > 0.50:
+            return "Satisfactory"
+        else:
+            return "Needs Improvement"
+    
+    def count_filler_words(self, text: str) -> dict:
+        """Count filler words in the text."""
+        filler_words = ["um", "uh", "er", "ah", "like", "you know", "basically", "actually", 
+                        "literally", "so", "well", "i mean", "kind of", "sort of"]
+        
+        text_lower = text.lower()
+        counts = {}
+        
+        for word in filler_words:
+            count = len(re.findall(r'\b' + re.escape(word) + r'\b', text_lower))
+            if count > 0:
+                counts[word] = count
+        
+        total = sum(counts.values())
+        
+        return {
+            "total": total,
+            "details": counts
+        }
 
 class SimpleVoiceAnalyzer:
     """A simple voice analyzer using basic signal processing."""
@@ -206,7 +385,13 @@ async def health_check():
     return {"status": "healthy"}
 
 @app.post("/upload-audio/{userEmail}/{questionId}")
-async def upload_audio(userEmail: str, questionId: str, audio: UploadFile=File(...)):
+async def upload_audio(
+    userEmail: str, 
+    questionId: str, 
+    audio: UploadFile = File(...),
+    capturedAnswer: str = Form(...),  # Now required
+    correctAnswer: str = Form(...)   # Now required
+):
     try:
         # Convert questionId to int if needed for internal processing
         question_id_int = int(questionId)
@@ -216,29 +401,104 @@ async def upload_audio(userEmail: str, questionId: str, audio: UploadFile=File(.
         if not contents:
             raise HTTPException(status_code=400, detail="Empty audio file")
         
-        # Create analyzer and process audio
-        analyzer = SimpleVoiceAnalyzer()
+        # Create voice analyzer and process audio
+        voice_analyzer = SimpleVoiceAnalyzer()
         
-        # Basic analysis (volume, clarity, rhythm)
-        result = analyzer.analyze_audio(contents)
+        # Voice analysis (volume, clarity, rhythm)
+        voice_result = voice_analyzer.analyze_audio(contents)
         
-        # Compute pitch score using the updated method
-        pitch_score = analyzer.analyze_pitch(contents)
+        # Compute pitch score
+        pitch_score = voice_analyzer.analyze_pitch(contents)
         
-        # Compute additional features (tone, frequency variation, pauses)
-        additional = analyzer.analyze_additional_features(contents)
+        # Compute additional voice features
+        additional = voice_analyzer.analyze_additional_features(contents)
         
-        # Merge all scores into the metrics dictionary
-        result["metrics"]["pitch_score"] = round(float(pitch_score), 2)
-        result["metrics"]["tone_score"] = additional["tone_score"]
-        result["metrics"]["frequency_variation"] = additional["frequency_variation"]
-        result["metrics"]["pause_score"] = additional["pause_score"]
+        # Merge all voice scores into the metrics dictionary
+        voice_metrics = voice_result["metrics"]
+        voice_metrics["pitch_score"] = round(float(pitch_score), 2)
+        voice_metrics["tone_score"] = additional["tone_score"]
+        voice_metrics["frequency_variation"] = additional["frequency_variation"]
+        voice_metrics["pause_score"] = additional["pause_score"]
             
-        if "error" in result:
-            logger.error(f"Analysis error: {result['error']}")
-            raise HTTPException(status_code=500, detail=result["error"])
-            
-        return JSONResponse(content=result)
+        if "error" in voice_result:
+            logger.error(f"Voice analysis error: {voice_result['error']}")
+            raise HTTPException(status_code=500, detail=voice_result["error"])
+        
+        # Create text analyzer and process text
+        text_analyzer = TextAnalyzer()
+        text_analysis = text_analyzer.analyze_text(correctAnswer, capturedAnswer)
+        
+        # Calculate combined metrics
+        bleu_score = 0.0  # Placeholder for BLEU score
+        
+        # Create a filler words dictionary in the required format for your frontend
+        filler_words_count = text_analysis.get("filler_words_count", {"total": 0, "details": {}})
+        
+        # Calculate an overall score combining voice and text analysis
+        voice_weight = 0.4
+        text_weight = 0.6
+        
+        overall_score = (
+            voice_metrics["overall_score"] * voice_weight + 
+            text_analysis.get("overall_score", 0) * text_weight
+        )
+        
+        # Generate comprehensive feedback
+        feedback_points = []
+        
+        # Voice feedback
+        feedback_points.append(voice_result["feedback"])
+        
+        # Semantic similarity feedback
+        if "semantic_rating" in text_analysis:
+            feedback_points.append(f"Your answer is {text_analysis['semantic_rating'].lower()} in terms of semantic similarity to the expected answer.")
+        
+        # Key point feedback
+        if "key_point_coverage" in text_analysis and "feedback" in text_analysis["key_point_coverage"]:
+            feedback_points.extend(text_analysis["key_point_coverage"]["feedback"])
+        
+        # Filler words feedback
+        if filler_words_count["total"] > 0:
+            filler_details = ", ".join([f"'{word}' ({count} times)" for word, count in filler_words_count["details"].items()])
+            feedback_points.append(f"You used {filler_words_count['total']} filler words: {filler_details}. Try to reduce these in your answers.")
+        
+        # Prepare response in the format expected by your frontend
+        response = {
+            "status": "success",
+            "metrics": {
+                # Voice metrics
+                "volume_score": voice_metrics["volume_score"],
+                "clarity_score": voice_metrics["clarity_score"],
+                "rhythm_score": voice_metrics["rhythm_score"],
+                "pitch_score": voice_metrics["pitch_score"],
+                "tone_score": voice_metrics["tone_score"],
+                "frequency_variation": voice_metrics["frequency_variation"],
+                "pause_score": voice_metrics["pause_score"],
+                "voice_overall": voice_metrics["overall_score"],
+                
+                # Text metrics
+                "semantic_similarity": text_analysis.get("semantic_similarity", 0) * 100,  # Convert to percentage
+                "semantic_rating": text_analysis.get("semantic_rating", "Not Available"),
+                "key_point_score": text_analysis.get("key_point_coverage", {}).get("percentage", 0),
+                "fillerWordsCount": filler_words_count,
+                "bleuScore": bleu_score,  # Placeholder - implement BLEU if needed
+                "text_overall": text_analysis.get("overall_score", 0),
+                
+                # Combined score
+                "overall_score": round(overall_score, 2)
+            },
+            "feedback": feedback_points,
+            "voiceMetrics": voice_metrics,  # For backward compatibility
+            "textAnalysis": {
+                "semanticSimilarity": {
+                    "score": text_analysis.get("semantic_similarity", 0) * 100,
+                    "rating": text_analysis.get("semantic_rating", "Not Available")
+                },
+                "keyPointsCoverage": text_analysis.get("key_point_coverage", {})
+            }
+        }
+        
+        return JSONResponse(content=response)
 
     except Exception as e:
         logger.error(f"Error processing audio: {str(e)}", exc_info=True)

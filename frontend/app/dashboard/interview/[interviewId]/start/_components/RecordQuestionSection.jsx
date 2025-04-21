@@ -234,7 +234,20 @@ function RecordQuestionSection({
       }
       
       const videoAnalysisData = await response.json();
+      const videoFeedback = `Take this video analysis data :- ${JSON.stringify(videoAnalysisData.analysis)} and i want you to give feedback to the student's video who just gave the interview.Give an encouraging feeback with keys to improve.Remove greetings.`;
+      const result = await chatSession .sendMessage(videoFeedback,{
+        generation_config:{temperature:0.0},
+      });
+      const mockJsonResp = result.response
+        .text()
+        .replace("```json", "")
+        .replace("```", "");
+        console.log(mockJsonResp)
+      // console.log("Eye movement analysis results:", videoAnalysisData.analysis);
+      videoAnalysisData.analysis.feedback=mockJsonResp;
       console.log("Eye movement analysis results:", videoAnalysisData.analysis);
+      
+      
       
       // Update the existing database record with video analysis metrics
       await db.update(UserAnswer).set({
@@ -289,6 +302,8 @@ function RecordQuestionSection({
         throw new Error("User email not found");
       }
   
+      // No changes needed here - you're already sending capturedAnswer and correctAnswer 
+      // in the FormData which is correct
       const response = await fetch(
         `http://localhost:8000/upload-audio/${encodeURIComponent(
           userEmail
@@ -304,6 +319,17 @@ function RecordQuestionSection({
         throw new Error(errorData?.detail || `Server error: ${response.status}`);
       }
       const data = await response.json();
+      console.log("dataaa",data)
+      const audioFeedback = `Take this audio analysis data :- ${JSON.stringify(data)} and i want you to give feedback to the student's audio who just gave the interview.Give an encouraging feeback with keys to improve.Remove greetings.`;
+      const result = await chatSession .sendMessage(audioFeedback,{
+        generation_config:{temperature:0.0},
+      });
+      const mockJsonResp = result.response
+        .text()
+        .replace("```json", "")
+        .replace("```", "");
+      data.metrics.feedback=mockJsonResp
+      console.log("data",data);
       setAnalysisResult(data);
   
       await updateUserAnswer(data.metrics, capturedAnswer);
@@ -332,7 +358,7 @@ function RecordQuestionSection({
       const feedbackPrompt = `Question: ${mockInterviewQuestion[activeQuestionIndex]?.question}, 
         User Answer: ${capturedAnswer}. Please provide a rating out of 10 and feedback in JSON format with fields: "rating" and "feedback".Please dont look for punctuation mistakes!Go easy on ratings`;
 
-      const result = await chatSession.sendMessage(feedbackPrompt,{
+      const result = await chatSession .sendMessage(feedbackPrompt,{
         generation_config:{temperature:0.0},
       });
       const mockJsonResp = result.response
