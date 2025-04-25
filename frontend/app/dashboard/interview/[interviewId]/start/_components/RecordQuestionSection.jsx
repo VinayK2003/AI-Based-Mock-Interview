@@ -304,6 +304,9 @@ function RecordQuestionSection({
   
       // No changes needed here - you're already sending capturedAnswer and correctAnswer 
       // in the FormData which is correct
+      console.log(`http://localhost:8000/upload-audio/${encodeURIComponent(
+          userEmail
+        )}/${activeQuestionIndex}`)
       const response = await fetch(
         `http://localhost:8000/upload-audio/${encodeURIComponent(
           userEmail

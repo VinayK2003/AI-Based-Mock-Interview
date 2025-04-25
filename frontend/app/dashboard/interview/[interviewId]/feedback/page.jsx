@@ -265,7 +265,7 @@ function Feedback() {
                   <div class="metrics">
                     <div class="metric-card">
                       <h5>Overall</h5>
-                      <p>${item.voiceMetrics.overall_score}</p>
+                      <p>${item.voiceMetrics.confidence_score}</p>
                     </div>
                     <div class="metric-card">
                       <h5>Clarity</h5>
@@ -343,7 +343,7 @@ function Feedback() {
           
           <div className="p-4 bg-white">
             <div className="grid grid-cols-4 gap-6 mb-6">
-              {renderScoreCard(metrics.voiceMetrics.overall_score, "Overall")}
+              {renderScoreCard(metrics.voiceMetrics.confidence_score, "Overall")}
               {renderScoreCard(metrics.voiceMetrics.clarity_score, "Clarity")}
               {renderScoreCard(metrics.voiceMetrics.rhythm_score, "Rhythm")}
               {renderScoreCard(metrics.voiceMetrics.tone_score, "Tone")}
@@ -620,7 +620,7 @@ function Feedback() {
                         
                         {item.bleuScore !== undefined && (
                           <div className="text-sm font-medium flex items-center gap-1">
-                            <span className="text-gray-500">Bleu:</span>
+                            <span className="text-gray-500">Text Matching Score:</span>
                             <span className="text-blue-600">{item.bleuScore}</span>
                           </div>
                         )}

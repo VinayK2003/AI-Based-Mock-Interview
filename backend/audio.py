@@ -14,13 +14,23 @@ from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
+import xgboost as xgb
 
 # Download required NLTK data
+# try:
+#     nltk.data.find('tokenizers/punkt')
+#     nltk.data.find('corpora/stopwords')
+# except LookupError:
+#     nltk.download('punkt')
+#     nltk.download('stopwords')
+
 try:
     nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('punkt')
+    nltk.download('punkt_tab')
     nltk.download('stopwords')
 
 app = FastAPI()
@@ -43,6 +53,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class ConfidenceAnalyzer:
+    """Handles confidence analysis using the trained XGBoost model."""
+    
+    def __init__(self, model_path='confidence_model.json'):
+        self.model = xgb.XGBClassifier()
+        self.model.load_model(model_path)
+    
+    def extract_features(self, audio_data: np.ndarray, sr: int) -> np.ndarray:
+        """Extract features for confidence prediction"""
+        try:
+            mfcc = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
+            rms = librosa.feature.rms(y=audio_data)
+            zcr = librosa.feature.zero_crossing_rate(y=audio_data)
+            cent = librosa.feature.spectral_centroid(y=audio_data, sr=sr)
+
+            mfcc_mean = np.mean(mfcc, axis=1)
+            mfcc_std = np.std(mfcc, axis=1)
+            rms_mean = np.mean(rms)
+            zcr_mean = np.mean(zcr)
+            cent_mean = np.mean(cent)
+
+            # Combine all features
+            features = np.hstack([mfcc_mean, mfcc_std, rms_mean, zcr_mean, cent_mean])
+            return features
+
+        except Exception as e:
+            logger.error(f"Feature extraction failed: {e}")
+            return None
+    
+    def predict_confidence(self, audio_data: np.ndarray, sr: int) -> dict:
+        """Predict confidence using the trained model"""
+        try:
+            features = self.extract_features(audio_data, sr)
+            if features is None:
+                return {'error': 'Failed to extract features'}
+
+            features = features.reshape(1, -1)
+            pred_prob = self.model.predict_proba(features)[0][1]
+            pred_class = 1 if pred_prob > 0.5 else 0
+
+            return {
+                'class': 'Confident' if pred_class == 1 else 'Not Confident',
+                'confidence_score': pred_prob * 100
+            }
+        except Exception as e:
+            logger.error(f"Error in predict_confidence: {str(e)}", exc_info=True)
+            return {'error': f'Confidence prediction failed: {str(e)}'}
 
 class TextAnalyzer:
     """Handles text-based analysis for semantic similarity and key point extraction."""
@@ -401,8 +459,12 @@ async def upload_audio(
         if not contents:
             raise HTTPException(status_code=400, detail="Empty audio file")
         
-        # Create voice analyzer and process audio
+        # Create analyzers
         voice_analyzer = SimpleVoiceAnalyzer()
+        confidence_analyzer = ConfidenceAnalyzer()
+        
+        # Get audio data and sample rate
+        audio_data, sr = voice_analyzer.load_audio(contents)
         
         # Voice analysis (volume, clarity, rhythm)
         voice_result = voice_analyzer.analyze_audio(contents)
@@ -412,6 +474,9 @@ async def upload_audio(
         
         # Compute additional voice features
         additional = voice_analyzer.analyze_additional_features(contents)
+        
+        # Confidence analysis using the trained model
+        confidence_result = confidence_analyzer.predict_confidence(audio_data, sr)
         
         # Merge all voice scores into the metrics dictionary
         voice_metrics = voice_result["metrics"]
@@ -428,19 +493,25 @@ async def upload_audio(
         text_analyzer = TextAnalyzer()
         text_analysis = text_analyzer.analyze_text(correctAnswer, capturedAnswer)
         
+        # Extract confidence scores
+        confidence_score = confidence_result.get('confidence_score', 0) if 'error' not in confidence_result else 0
+        confidence_class = confidence_result.get('class', 'Unknown') if 'error' not in confidence_result else 'Unknown'
+        
         # Calculate combined metrics
         bleu_score = 0.0  # Placeholder for BLEU score
         
         # Create a filler words dictionary in the required format for your frontend
         filler_words_count = text_analysis.get("filler_words_count", {"total": 0, "details": {}})
         
-        # Calculate an overall score combining voice and text analysis
-        voice_weight = 0.4
-        text_weight = 0.6
+        # Calculate an overall score combining voice, text, and confidence analysis
+        voice_weight = 0.3
+        text_weight = 0.4
+        confidence_weight = 0.3
         
         overall_score = (
             voice_metrics["overall_score"] * voice_weight + 
-            text_analysis.get("overall_score", 0) * text_weight
+            text_analysis.get("overall_score", 0) * text_weight +
+            confidence_score * confidence_weight
         )
         
         # Generate comprehensive feedback
@@ -448,6 +519,9 @@ async def upload_audio(
         
         # Voice feedback
         feedback_points.append(voice_result["feedback"])
+        
+        # Confidence feedback
+        feedback_points.append(f"Your confidence level is detected as: {confidence_class} ({confidence_score:.1f}%)")
         
         # Semantic similarity feedback
         if "semantic_rating" in text_analysis:
@@ -475,6 +549,10 @@ async def upload_audio(
                 "frequency_variation": voice_metrics["frequency_variation"],
                 "pause_score": voice_metrics["pause_score"],
                 "voice_overall": voice_metrics["overall_score"],
+                
+                # Confidence metrics
+                "confidence_score": confidence_score,
+                "confidence_class": confidence_class,
                 
                 # Text metrics
                 "semantic_similarity": text_analysis.get("semantic_similarity", 0) * 100,  # Convert to percentage
