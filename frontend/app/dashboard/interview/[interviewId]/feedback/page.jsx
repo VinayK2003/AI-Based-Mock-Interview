@@ -8,6 +8,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../../../../../components/ui/collapsible";
+import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { dracula } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { 
   ChevronDown, 
   Award, 
@@ -370,7 +373,30 @@ function Feedback() {
             
             <div className="bg-blue-50 p-4 rounded-lg">
               <h4 className="font-medium text-blue-800 mb-2">Voice Feedback:</h4>
-              <p className="text-sm text-blue-900">{metrics.voiceMetrics.feedback}</p>
+              <ReactMarkdown
+      components={{
+        code({ node, inline, className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          return !inline && match ? (
+            <SyntaxHighlighter
+              style={dracula}
+              language={match[1]}
+              PreTag="div"
+              {...props}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
+          ) : (
+            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+                        {metrics.voiceMetrics.feedback}
+                          </ReactMarkdown>
+              {/* <p className="text-sm text-blue-900">{metrics.voiceMetrics.feedback}</p> */}
             </div>
           </div>
         </div>
@@ -495,7 +521,30 @@ function Feedback() {
               
               <div className="bg-emerald-50 p-4 rounded-lg">
                 <h4 className="font-medium text-emerald-800 mb-2">Video Feedback:</h4>
-                <p className="text-sm text-emerald-900">{metrics.videoMetrics.feedback}</p>
+                <ReactMarkdown
+      components={{
+        code({ node, inline, className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          return !inline && match ? (
+            <SyntaxHighlighter
+              style={dracula}
+              language={match[1]}
+              PreTag="div"
+              {...props}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
+          ) : (
+            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+                        {metrics.videoMetrics.feedback}
+                          </ReactMarkdown>
+                {/* <p className="text-sm text-emerald-900">{metrics.videoMetrics.feedback}</p> */}
               </div>
             </div>
           </div>
@@ -654,7 +703,30 @@ function Feedback() {
                           <CheckCircle className="h-4 w-4" />
                           Ideal Answer
                         </h4>
-                        <p className="text-sm text-green-900">{item.correctAns}</p>
+                        <ReactMarkdown
+      components={{
+        code({ node, inline, className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          return !inline && match ? (
+            <SyntaxHighlighter
+              style={dracula}
+              language={match[1]}
+              PreTag="div"
+              {...props}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
+          ) : (
+            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+                        {item.correctAns}
+                          </ReactMarkdown>
+                        {/* <p className="text-sm text-green-900">{item.correctAns}</p> */}
                       </div>
                       
                       {renderAnalysisMetrics(item)}
