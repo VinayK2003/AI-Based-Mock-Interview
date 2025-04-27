@@ -234,7 +234,8 @@ function RecordQuestionSection({
       }
       
       const videoAnalysisData = await response.json();
-      const videoFeedback = `Take this video analysis data :- ${JSON.stringify(videoAnalysisData.analysis)} and i want you to give feedback to the student's video who just gave the interview.Give an encouraging feeback with keys to improve.Remove greetings.`;
+      // print("video response", videoAnalysisData)
+      const videoFeedback = `Take this video analysis data :- ${JSON.stringify(videoAnalysisData)} and i want you to give feedback to the student's video who just gave the interview.Give an encouraging feeback with keys to improve.Remove greetings.`;
       const result = await chatSession .sendMessage(videoFeedback,{
         generation_config:{temperature:0.0},
       });
@@ -322,7 +323,7 @@ function RecordQuestionSection({
         throw new Error(errorData?.detail || `Server error: ${response.status}`);
       }
       const data = await response.json();
-      console.log("Audio dataaa",data)
+      console.log("dataaa",data)
       const audioFeedback = `Take this audio analysis data :- ${JSON.stringify(data)} and i want you to give feedback to the student's audio who just gave the interview.Give an encouraging feeback with keys to improve.Remove greetings.`;
       const result = await chatSession .sendMessage(audioFeedback,{
         generation_config:{temperature:0.0},

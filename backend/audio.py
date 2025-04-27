@@ -247,25 +247,27 @@ class TextAnalyzer:
             return "Needs Improvement"
     
     def count_filler_words(self, text: str) -> dict:
-        """Count filler words in the text."""
-        filler_words = ["um", "uh", "er", "ah", "like", "you know", "basically", "actually", 
-                        "literally", "so", "well", "i mean", "kind of", "sort of"]
-        
-        text_lower = text.lower()
-        counts = {}
-        
-        for word in filler_words:
-            count = len(re.findall(r'\b' + re.escape(word) + r'\b', text_lower))
-            if count > 0:
-                counts[word] = count
-        
-        total = sum(counts.values())
-        
-        return {
-            "total": total,
-            "details": counts
-        }
+     """Count filler words in the text and calculate percentage."""
+     filler_words = ["um", "uh", "er", "ah", "like", "you know", "basically", "actually", 
+                    "literally", "so", "well", "i mean", "kind of", "sort of"]
+    
+     text_lower = text.lower()
+     counts = {}
+    
+     for word in filler_words:
+        count = len(re.findall(r'\b' + re.escape(word) + r'\b', text_lower))
+        if count > 0:
+            counts[word] = count
+    
+     total_filler = sum(counts.values())
+     total_words = len(re.findall(r'\b\w+\b', text_lower))  # count total words in text
 
+     percentage = (total_filler / total_words * 100) if total_words > 0 else 0
+
+     return {
+        "total": round(percentage, 2),
+        "details": counts
+     }
 class SimpleVoiceAnalyzer:
     """A simple voice analyzer using basic signal processing."""
     

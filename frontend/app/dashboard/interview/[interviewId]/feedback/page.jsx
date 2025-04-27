@@ -3,6 +3,9 @@ import React, { useEffect, useState } from "react";
 import { db } from "../../../../../utils/db";
 import { UserAnswer } from "../../../../../utils/schema";
 import { eq } from "drizzle-orm";
+import { Bar } from 'react-chartjs-2';
+import { Chart as ChartJS, BarElement, CategoryScale, LinearScale } from 'chart.js';
+ChartJS.register(BarElement, CategoryScale, LinearScale);
 import {
   Collapsible,
   CollapsibleContent,
@@ -20,7 +23,11 @@ import {
   Video, 
   Smile, 
   MoveHorizontal,
-  Download
+  Download,
+  BarChart,
+  PieChart,
+  LineChart,
+  TrendingUp
 } from "lucide-react";
 import { Button } from "../../../../../components/ui/button";
 import { useRouter } from "next/navigation";
@@ -41,7 +48,6 @@ const FallbackProgress = ({ value, className, indicatorClassName }) => (
 let Progress;
 try {
   // Dynamic import to avoid build errors
-  // In a real project you might use React.lazy or a different approach
   Progress = FallbackProgress;
 } catch (error) {
   Progress = FallbackProgress;
@@ -194,6 +200,36 @@ function Feedback() {
               height: 100%;
               border-radius: 5px;
             }
+            .analysis-section {
+              background-color: #f8f9fa;
+              border: 1px solid #e9ecef;
+              border-radius: 8px;
+              padding: 15px;
+              margin-bottom: 15px;
+            }
+            .chart-container {
+              margin: 15px 0;
+              text-align: center;
+            }
+            .chart-section {
+              background-color: #ffffff;
+              border: 1px solid #e0e0e0;
+              border-radius: 8px;
+              padding: 10px;
+              margin-bottom: 10px;
+            }
+            .emotion-grid {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 10px;
+              margin-top: 10px;
+            }
+            .emotion-item {
+              background-color: #f0f4f8;
+              border: 1px solid #d0d7de;
+              padding: 8px;
+              border-radius: 6px;
+            }
           </style>
         </head>
         <body>
@@ -263,7 +299,7 @@ function Feedback() {
               </div>
               
               ${item.voiceMetrics ? `
-                <div style="margin-top: 20px;">
+                <div class="analysis-section">
                   <h4>Voice Analysis</h4>
                   <div class="metrics">
                     <div class="metric-card">
@@ -286,6 +322,54 @@ function Feedback() {
                   <p><strong>Voice Feedback:</strong> ${item.voiceMetrics.feedback}</p>
                 </div>
               ` : ''}
+              
+              ${item.videoMetrics ? `
+                <div class="analysis-section">
+                  <h4>Video Analysis</h4>
+                  
+                  <div class="metrics">
+                    <div class="metric-card">
+                      <h5>Interview Score</h5>
+                      <p>${item.videoMetrics.metrics.interview_score}/10</p>
+                    </div>
+                    <div class="metric-card">
+                      <h5>Positive Emotions</h5>
+                      <p>${item.videoMetrics.metrics.positive_emotions_percentage}%</p>
+                    </div>
+                    <div class="metric-card">
+                      <h5>Blink Rate</h5>
+                      <p>${item.videoMetrics.metrics.blink_rate.toFixed(1)}/min</p>
+                    </div>
+                    <div class="metric-card">
+                      <h5>Looking Away</h5>
+                      <p>${item.videoMetrics.metrics.total_looking_away} times</p>
+                    </div>
+                  </div>
+
+                  <h5>Emotion Distribution</h5>
+                  <div class="emotion-grid">
+                    ${Object.entries(item.videoMetrics.metrics.raw_metrics.emotion_count || {}).map(([emotion, count]) => `
+                      <div class="emotion-item">
+                        <strong>${emotion}:</strong> ${count}
+                      </div>
+                    `).join('')}
+                  </div>
+                  
+                  <h5>Head Movement</h5>
+                  <div class="emotion-grid">
+                    ${Object.entries(item.videoMetrics.metrics.raw_metrics.head_movement || {}).map(([direction, count]) => `
+                      <div class="emotion-item">
+                        <strong>${direction.replace(/_/g, ' ')}:</strong> ${count}
+                      </div>
+                    `).join('')}
+                  </div>
+                  
+                  <p><strong>Video Feedback:</strong></p>
+                  <ul>
+                    ${item.videoMetrics.feedback}
+                  </ul>
+                </div>
+              ` : ''}
             </div>
           `).join('')}
         </body>
@@ -293,7 +377,7 @@ function Feedback() {
       `;
       
       // Write the content to the iframe
-      printFrame.contentDocument.write(content);
+      printFrame.contentDocument.body.innerHTML=content;
       printFrame.contentDocument.close();
       
       // Wait for content to load
@@ -327,6 +411,28 @@ function Feedback() {
             className={score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-500' : 'bg-red-500'} 
             style={{ width: `${score}%`, height: '100%' }}
           ></div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderChartImage = (base64String, title, icon) => {
+    if (!base64String) return null;
+    
+    const Icon = icon || BarChart;
+    
+    return (
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Icon className="h-4 w-4 text-gray-600" />
+          <h4 className="text-sm font-medium text-gray-700">{title}</h4>
+        </div>
+        <div className="bg-white border rounded-lg overflow-hidden shadow-sm">
+          <img 
+            src={`data:image/png;base64,${base64String}`} 
+            alt={title} 
+            className="w-full h-auto object-contain" 
+          />
         </div>
       </div>
     );
@@ -374,29 +480,28 @@ function Feedback() {
             <div className="bg-blue-50 p-4 rounded-lg">
               <h4 className="font-medium text-blue-800 mb-2">Voice Feedback:</h4>
               <ReactMarkdown
-      components={{
-        code({ node, inline, className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          return !inline && match ? (
-            <SyntaxHighlighter
-              style={dracula}
-              language={match[1]}
-              PreTag="div"
-              {...props}
-            >
-              {String(children).replace(/\n$/, "")}
-            </SyntaxHighlighter>
-          ) : (
-            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
-              {children}
-            </code>
-          );
-        },
-      }}
-    >
-                        {metrics.voiceMetrics.feedback}
-                          </ReactMarkdown>
-              {/* <p className="text-sm text-blue-900">{metrics.voiceMetrics.feedback}</p> */}
+                components={{
+                  code({ node, inline, className, children, ...props }) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={dracula}
+                        language={match[1]}
+                        PreTag="div"
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {metrics.voiceMetrics.feedback}
+              </ReactMarkdown>
             </div>
           </div>
         </div>
@@ -410,38 +515,95 @@ function Feedback() {
             </div>
             
             <div className="p-4 bg-white">
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
-                  <div className="flex justify-between items-center mb-2">
-                    <h4 className="font-medium text-emerald-800 flex items-center gap-2">
-                      <Smile className="h-4 w-4" />
-                      Positive Emotions
-                    </h4>
-                    <span className="text-lg font-bold text-emerald-700">
-                      {metrics.videoMetrics.positive_emotions_percentage}%
-                    </span>
+              <div className="flex flex-col md:flex-row gap-6 mb-6">
+                {/* Left column - metrics */}
+                <div className="w-full md:w-1/3 space-y-4">
+                  <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="font-medium text-emerald-800 flex items-center gap-2">
+                        <Award className="h-4 w-4" />
+                        Interview Score
+                      </h4>
+                      <span className="text-lg font-bold text-emerald-700">
+                        {metrics.videoMetrics.metrics.interview_score}/10
+                      </span>
+                    </div>
+                    <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-2 bg-emerald-500 rounded-full" 
+                        style={{width: `${metrics.videoMetrics.metrics.interview_score * 10}%`}}
+                      ></div>
+                    </div>
                   </div>
-                  <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
-                    <div 
-                      className="h-2 bg-emerald-500 rounded-full" 
-                      style={{width: `${metrics.videoMetrics.positive_emotions_percentage}%`}}
-                    ></div>
+                
+                  <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="font-medium text-emerald-800 flex items-center gap-2">
+                        <Smile className="h-4 w-4" />
+                        Positive Emotions
+                      </h4>
+                      <span className="text-lg font-bold text-emerald-700">
+                        {metrics.videoMetrics.metrics.positive_emotions_percentage}%
+                      </span>
+                    </div>
+                    <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-2 bg-emerald-500 rounded-full" 
+                        style={{width: `${metrics.videoMetrics.metrics.positive_emotions_percentage}%`}}
+                      ></div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="font-medium text-emerald-800">Blink Rate</h4>
+                      <span className="text-lg font-bold text-emerald-700">
+                        {metrics.videoMetrics.metrics.blink_rate.toFixed(1)}
+                        <span className="text-xs font-normal ml-1">blinks/min</span>
+                      </span>
+                    </div>
+                    <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-2 bg-emerald-500 rounded-full" 
+                        style={{width: `${Math.min(100, metrics.videoMetrics.metrics.blink_rate * 5)}%`}}
+                      ></div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="font-medium text-emerald-800">Looking Away</h4>
+                      <span className="text-lg font-bold text-emerald-700">
+                        {metrics.videoMetrics.metrics.total_looking_away}
+                        <span className="text-xs font-normal ml-1">times</span>
+                      </span>
+                    </div>
+                    <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-2 bg-emerald-500 rounded-full" 
+                        style={{width: `${Math.min(100, metrics.videoMetrics.metrics.total_looking_away * 10)}%`}}
+                      ></div>
+                    </div>
                   </div>
                 </div>
                 
-                <div className="bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
-                  <div className="flex justify-between items-center mb-2">
-                    <h4 className="font-medium text-emerald-800">Blink Rate</h4>
-                    <span className="text-lg font-bold text-emerald-700">
-                      {metrics.videoMetrics.blink_rate.toFixed(1)}
-                      <span className="text-xs font-normal ml-1">blinks/min</span>
-                    </span>
-                  </div>
-                  <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
-                    <div 
-                      className="h-2 bg-emerald-500 rounded-full" 
-                      style={{width: `${Math.min(100, metrics.videoMetrics.blink_rate * 5)}%`}}
-                    ></div>
+                {/* Right column - charts */}
+                <div className="w-full md:w-2/3">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {metrics.videoMetrics.charts.score_chart && 
+                      renderChartImage(metrics.videoMetrics.charts.score_chart, "Interview Performance Score", Award)}
+                      
+                    {metrics.videoMetrics.charts.emotion_chart && 
+                      renderChartImage(metrics.videoMetrics.charts.emotion_chart, "Emotion Distribution", PieChart)}
+                      
+                    {metrics.videoMetrics.charts.ear_chart && 
+                      renderChartImage(metrics.videoMetrics.charts.ear_chart, "Blink Detection", LineChart)}
+                      
+                    {metrics.videoMetrics.charts.head_movement_chart && 
+                      renderChartImage(metrics.videoMetrics.charts.head_movement_chart, "Head Movement Count", BarChart)}
+                      
+                    {metrics.videoMetrics.charts.head_orientation_chart && 
+                      renderChartImage(metrics.videoMetrics.charts.head_orientation_chart, "Head Orientation Over Time", TrendingUp)}
                   </div>
                 </div>
               </div>
@@ -453,8 +615,8 @@ function Feedback() {
                   Emotion Analysis
                 </h4>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {metrics.videoMetrics.raw_metrics.emotion_count && 
-                   Object.entries(metrics.videoMetrics.raw_metrics.emotion_count).map(([emotion, percentage]) => (
+                  {metrics.videoMetrics.metrics.raw_metrics.emotion_count && 
+                   Object.entries(metrics.videoMetrics.metrics.raw_metrics.emotion_count).map(([emotion, count]) => (
                     <div 
                       key={emotion} 
                       className={`${EMOTION_COLORS[emotion] || 'bg-gray-100'} p-3 rounded-lg border`}
@@ -462,7 +624,7 @@ function Feedback() {
                       <div className="flex justify-between items-center mb-2">
                         <h5 className="font-medium">{emotion}</h5>
                         <span className="text-sm font-bold">
-                          {percentage}%
+                          {count}
                         </span>
                       </div>
                       <div className="h-1.5 bg-white/50 rounded-full overflow-hidden">
@@ -476,7 +638,7 @@ function Feedback() {
                             emotion === "Fear" ? "bg-yellow-500" :
                             "bg-orange-500"
                           }
-                          style={{width: `${percentage}%`, height: '100%'}}
+                          style={{width: `${Math.min(100, count * 5)}%`, height: '100%'}}
                         ></div>
                       </div>
                     </div>
@@ -491,27 +653,22 @@ function Feedback() {
                   Head Movement Analysis
                 </h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {metrics.videoMetrics.raw_metrics.head_movement && 
-                   Object.entries(metrics.videoMetrics.raw_metrics.head_movement).map(([direction, percentage]) => (
+                  {metrics.videoMetrics.metrics.raw_metrics.head_movement && 
+                   Object.entries(metrics.videoMetrics.metrics.raw_metrics.head_movement).map(([direction, count]) => (
                     <div 
                       key={direction} 
-                      className={`${MOVEMENT_COLORS[direction] || 'bg-gray-100'} p-3 rounded-lg border`}
+                      className={`bg-gray-100 p-3 rounded-lg border`}
                     >
                       <div className="flex justify-between items-center mb-1">
-                        <h5 className="font-medium capitalize">{direction}</h5>
+                        <h5 className="font-medium capitalize">{direction.replace(/_/g, ' ')}</h5>
                         <span className="text-sm font-bold">
-                          {percentage}%
+                          {count}
                         </span>
                       </div>
                       <div className="h-1.5 bg-white/50 rounded-full overflow-hidden">
                         <div 
-                          className={
-                            direction === "left" ? "bg-blue-500" :
-                            direction === "right" ? "bg-green-500" :
-                            direction === "up" ? "bg-yellow-500" :
-                            "bg-red-500"
-                          }
-                          style={{width: `${percentage}%`, height: '100%'}}
+                          className="bg-blue-500"
+                          style={{width: `${Math.min(100, count * 10)}%`, height: '100%'}}
                         ></div>
                       </div>
                     </div>
@@ -522,29 +679,28 @@ function Feedback() {
               <div className="bg-emerald-50 p-4 rounded-lg">
                 <h4 className="font-medium text-emerald-800 mb-2">Video Feedback:</h4>
                 <ReactMarkdown
-      components={{
-        code({ node, inline, className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          return !inline && match ? (
-            <SyntaxHighlighter
-              style={dracula}
-              language={match[1]}
-              PreTag="div"
-              {...props}
-            >
-              {String(children).replace(/\n$/, "")}
-            </SyntaxHighlighter>
-          ) : (
-            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
-              {children}
-            </code>
-          );
-        },
-      }}
-    >
-                        {metrics.videoMetrics.feedback}
-                          </ReactMarkdown>
-                {/* <p className="text-sm text-emerald-900">{metrics.videoMetrics.feedback}</p> */}
+                components={{
+                  code({ node, inline, className, children, ...props }) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={dracula}
+                        language={match[1]}
+                        PreTag="div"
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {metrics.videoMetrics.feedback}
+              </ReactMarkdown>
               </div>
             </div>
           </div>
@@ -670,14 +826,14 @@ function Feedback() {
                         {item.bleuScore !== undefined && (
                           <div className="text-sm font-medium flex items-center gap-1">
                             <span className="text-gray-500">Text Matching Score:</span>
-                            <span className="text-blue-600">{item.bleuScore}</span>
+                            <span className="text-blue-600">{item.voiceMetrics.semantic_similarity}</span>
                           </div>
                         )}
                         
                         {item.fillerWordsCount !== undefined && (
                           <div className="text-sm font-medium flex items-center gap-1">
                             <span className="text-gray-500">Filler Words:</span>
-                            <span className="text-purple-600">{item.fillerWordsCount}</span>
+                            <span className="text-purple-600">{item.fillerWordsCount}%</span>
                           </div>
                         )}
                       </div>
