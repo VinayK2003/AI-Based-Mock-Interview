@@ -377,7 +377,8 @@ function Feedback() {
       `;
       
       // Write the content to the iframe
-      printFrame.contentDocument.body.innerHTML=content;
+      printFrame.contentDocument.open();
+      printFrame.contentDocument.write(content);
       printFrame.contentDocument.close();
       
       // Wait for content to load
