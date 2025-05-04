@@ -890,7 +890,30 @@ function Feedback() {
                       
                       <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
                         <h4 className="font-medium text-amber-800 mb-2">Feedback for Improvement</h4>
-                        <p className="text-sm text-amber-900">{item.feedback}</p>
+                        {/* <p className="text-sm text-amber-900">{item.feedback}</p> */}
+                        <ReactMarkdown
+      components={{
+        code({ node, inline, className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          return !inline && match ? (
+            <SyntaxHighlighter
+              style={dracula}
+              language={match[1]}
+              PreTag="div"
+              {...props}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
+          ) : (
+            <code className="bg-green-100 px-1 py-0.5 rounded" {...props}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+                        {item.feedback}
+                          </ReactMarkdown>
                       </div>
                     </div>
                   </div>
